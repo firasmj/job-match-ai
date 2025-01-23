@@ -48,7 +48,7 @@ app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
         console.log('extractedText: ', extractedText.value);
 
         const jobAnalysis = await openai.chat.completions.create({
-            model: 'gpt-4o',
+            model: 'gpt-4o-mini',
             messages: [
                 { role: 'system', content: 'You are a helpful assistant.' },
                 {
@@ -70,22 +70,33 @@ app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
         const temp = JSON.parse(jobAnalysis.choices[0]?.message?.content?.trim() || 'jobs:[\'\']').jobs;
         const suggestedJobTitles: string[] = temp ?? [];
 
-        console.log( "SUGGESTEDDDD:  ", suggestedJobTitles.toString());
+        console.log("SUGGESTEDDDD:  ", suggestedJobTitles.toString());
 
         const jobs: job[] | undefined = await getPostTitles(suggestedJobTitles);
 
         const filteredJobs = await openai.chat.completions.create({
-            model: 'gpt-4',
+            model: 'gpt-4o-mini',
             messages: [
                 { role: 'system', content: 'You are a helpful assistant.' },
                 { role: 'user', content: `Here is a resume:\n${extractedText.value}` },
                 { role: 'user', content: `Here are some job postings:\n${JSON.stringify(jobs)}` },
-                { role: 'user', content: 'Filter the suitable jobs based on the resume and return them in a json format identical to the one i sent you.' },
+                // { role: 'user', content: 'Filter the suitable jobs based on the resume and return them in a json format identical to the one i sent you.' },
+                { role: 'user', content: 'Filter the suitable jobs based on the resume and return them in an array of numbers containing the IDs of these jobs. Respond with only the JSON object, without any formatting markers or triple backticks.' },
             ],
         });
 
-        const finalJobs = filteredJobs.choices[0]?.message?.content;
-        console.log("FINALJOBS", finalJobs);
+        // const finalJobs = filteredJobs.choices[0]?.message?.content;
+        let finalJobs = filteredJobs.choices[0]?.message?.content || '[]';
+        console.log("Final Jobsss: ",finalJobs);
+        let final:number[] = JSON.parse(finalJobs);
+        if(!Array.isArray(final)){
+            console.log('parsed data is not an array');
+        }else{
+            console.log("FINALJOBS", finalJobs);
+            let filteredJobs:job[] = jobs.filter((job) => final.includes(Number(job.id)));
+            console.log("Filtered JOBSSS: ", JSON.stringify(filteredJobs));
+            res.json(filteredJobs);
+        }
     } catch (error) {
         console.log(error);
     }
@@ -128,7 +139,8 @@ const sitesData: site[] = [
     {
         name: "Bayt",
         // link: "https://www.bayt.com/en/lebanon/jobs/software-jobs/",
-        link: "https://www.bayt.com/en/lebanon/jobs/",
+        link: "https://www.bayt.com",
+        jobsLink: "https://www.bayt.com/en/lebanon/jobs/",
         location: "div > ul > li > div > h2 > a",
         jobs: [],
     }
@@ -136,17 +148,13 @@ const sitesData: site[] = [
 
 const getPostTitles = async (jobTitles: string[]) => {
 
+    const jobs: job[] = [];
+
     for (const site of sitesData) {
         // sitesData.forEach((site) => {
 
         //let url: string = '';
-        let tmpJobs: job[] = [{
-            name: '',
-            description: '',
-            company: '',
-            location: '',
-            datePosted: ''
-        }];
+        let tmpJobs: job[] = [];
 
         // Initialise empty data array
         const postTitles: string[] = [];
@@ -164,7 +172,7 @@ const getPostTitles = async (jobTitles: string[]) => {
                 // "https://www.naukrigulf.com/engineering-jobs"
                 // "https://lebanon.tanqeeb.com/s/jobs/ember-jobs"
                 // "https://www.bayt.com/en/lebanon/jobs/software-jobs/"
-                site.link + jobTitles[0].replace(/\s+/g, '-') + '-jobs'
+                site.jobsLink + jobTitles[0].replace(/\s+/g, '-') + '-jobs'
             );
 
             // Parse HTML with Cheerio
@@ -182,7 +190,7 @@ const getPostTitles = async (jobTitles: string[]) => {
                 const postTitle: string = $(el).text().trim();
                 const link: string = $(el).attr('href');
                 // postLinks.push(`${site.link.slice(0, -1)}${link}`);
-                postLinks.push(`https://www.bayt.com${link}`);
+                postLinks.push(`${site.link}${link}`);
                 postTitles.push(postTitle);
             });
 
@@ -195,6 +203,7 @@ const getPostTitles = async (jobTitles: string[]) => {
                             // postLinks.forEach((link) => {
                             const { data } = await axios.get(link);
                             const $ = cheerio.load(data);
+                            let id: number = tmpJobs.length;
                             let name: string = $('div.media-d > div > div > h1.h3').text();
                             let description: string = $('div.t-break > p').text();
                             let company: string = $('div.p0 > ul > li > a').text();
@@ -205,6 +214,7 @@ const getPostTitles = async (jobTitles: string[]) => {
                             let date: string = $('div.m10y > span').text();
                             // console.log("name: ", name, " - descriptionn: ", description);
                             tmpJobs.push({
+                                id: id,
                                 name: name,
                                 description: description,
                                 company: company,
@@ -226,11 +236,15 @@ const getPostTitles = async (jobTitles: string[]) => {
 
             // Return the array with all titles
             // return postTitles.concat(postLinks);
-            return site.jobs;
+            // return site.jobs;
+            site.jobs.forEach((job) => {
+                jobs.push(job);
+            });
         } catch (error) {
             throw error;
         }
     }
+    return jobs;
 }
 
 // getPostTitles()

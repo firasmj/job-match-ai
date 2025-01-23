@@ -1,4 +1,5 @@
 export interface job{
+    id: number;
     name: string;
     description: string;
     company?: string;
@@ -9,6 +10,7 @@ export interface job{
 export interface site {
     name: string;
     link: string;
+    jobsLink: string;
     location: string;
     jobs: job[];
 }
