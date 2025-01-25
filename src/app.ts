@@ -52,7 +52,7 @@ app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
             messages: [
                 { role: 'system', content: 'You are a helpful assistant.' },
                 {
-                    role: 'user', content: `Analyze the following resume and suggest job titles in the following string array format. Respond with only the JSON object, without any formatting markers or triple backticks.:
+                    role: 'user', content: `Analyze the following resume and suggest job titles in the following string array format. Return only 2 most suitable job titles only. Respond with only the JSON object, without any formatting markers or triple backticks.:
                     {
                     "jobs": 
                     [
@@ -87,13 +87,13 @@ app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
 
         // const finalJobs = filteredJobs.choices[0]?.message?.content;
         let finalJobs = filteredJobs.choices[0]?.message?.content || '[]';
-        console.log("Final Jobsss: ",finalJobs);
-        let final:number[] = JSON.parse(finalJobs);
-        if(!Array.isArray(final)){
+        console.log("Final Jobsss: ", finalJobs);
+        let final: number[] = JSON.parse(finalJobs);
+        if (!Array.isArray(final)) {
             console.log('parsed data is not an array');
-        }else{
+        } else {
             console.log("FINALJOBS", finalJobs);
-            let filteredJobs:job[] = jobs.filter((job) => final.includes(Number(job.id)));
+            let filteredJobs: job[] = jobs.filter((job) => final.includes(Number(job.id)));
             console.log("Filtered JOBSSS: ", JSON.stringify(filteredJobs));
             res.json(filteredJobs);
         }
@@ -154,94 +154,105 @@ const getPostTitles = async (jobTitles: string[]) => {
         // sitesData.forEach((site) => {
 
         //let url: string = '';
-        let tmpJobs: job[] = [];
 
         // Initialise empty data array
         const postTitles: string[] = [];
         const postLinks: string[] = [];
+        let jobsCounter: number = 0;
 
-        try {
-            // for (let i = 0; i < sitesData.length; i++) {
-            //     switch (sitesData[i].name) {
-            //         case 'Tanqeeb':
-            //             url = sitesData[i].link;
-            //     }
-            // }
-            const { data } = await axios.get(
-                // 'https://www.hirelebanese.com/searchresults.aspx?resume=0&top=0&location=&company=&category=10'
-                // "https://www.naukrigulf.com/engineering-jobs"
-                // "https://lebanon.tanqeeb.com/s/jobs/ember-jobs"
-                // "https://www.bayt.com/en/lebanon/jobs/software-jobs/"
-                site.jobsLink + jobTitles[0].replace(/\s+/g, '-') + '-jobs'
-            );
+        for (const title of jobTitles) {
+            try {
+                let tmpJobs: job[] = [];
+                let jobLinks: string[] = [];
+                // for (let i = 0; i < sitesData.length; i++) {
+                //     switch (sitesData[i].name) {
+                //         case 'Tanqeeb':
+                //             url = sitesData[i].link;
+                //     }
+                // }
+                const { data } = await axios.get(
+                    // 'https://www.hirelebanese.com/searchresults.aspx?resume=0&top=0&location=&company=&category=10'
+                    // "https://www.naukrigulf.com/engineering-jobs"
+                    // "https://lebanon.tanqeeb.com/s/jobs/ember-jobs"
+                    // "https://www.bayt.com/en/lebanon/jobs/software-jobs/"
+                    site.jobsLink + title.replace(/\s+/g, '-') + '-jobs'
+                );
 
-            // Parse HTML with Cheerio
-            const $ = cheerio.load(data);
+                // Parse HTML with Cheerio
+                const $ = cheerio.load(data);
 
-            // // Initialise empty data array
-            // const postTitles: string[] = [];
-            // const postLinks: string[] = [];
+                // // Initialise empty data array
+                // const postTitles: string[] = [];
+                // const postLinks: string[] = [];
 
-            // Iterate over all anchor links for the given selector and ....
-            // $('div > h4 > a').each((_idx:number, el:any) => {
-            // $('h2 .hover-title').each((_idx:number, el:any) => {
-            $(site.location).each((_idx: number, el: any) => {
-                // .... extract for each the tag text and add it to the data array
-                const postTitle: string = $(el).text().trim();
-                const link: string = $(el).attr('href');
-                // postLinks.push(`${site.link.slice(0, -1)}${link}`);
-                postLinks.push(`${site.link}${link}`);
-                postTitles.push(postTitle);
-            });
-
-            // (async () => {
-            switch (site.name) {
-                case 'Bayt':
-                    for (const link of postLinks) {
-                        console.log(link);
-                        try {
-                            // postLinks.forEach((link) => {
-                            const { data } = await axios.get(link);
-                            const $ = cheerio.load(data);
-                            let id: number = tmpJobs.length;
-                            let name: string = $('div.media-d > div > div > h1.h3').text();
-                            let description: string = $('div.t-break > p').text();
-                            let company: string = $('div.p0 > ul > li > a').text();
-                            let location: string = '';
-                            $('div > ul > li > span > a.t-mute').each((_idx: number, el: any) => {
-                                location += $(el).text();
-                            });
-                            let date: string = $('div.m10y > span').text();
-                            // console.log("name: ", name, " - descriptionn: ", description);
-                            tmpJobs.push({
-                                id: id,
-                                name: name,
-                                description: description,
-                                company: company,
-                                location: location,
-                                datePosted: date
-                            });
-                            // $('div.t-break > p').each((_idx: number, el: any) => {
-                            //     description = $(el).text();
-                            // })
-                        } catch (error) {
-                            console.log("errorrr");
-                            // exit();
-                        }
+                // Iterate over all anchor links for the given selector and ....
+                // $('div > h4 > a').each((_idx:number, el:any) => {
+                // $('h2 .hover-title').each((_idx:number, el:any) => {
+                $(site.location).each((_idx: number, el: any) => {
+                    // .... extract for each the tag text and add it to the data array
+                    const postTitle: string = $(el).text().trim();
+                    const link: string = $(el).attr('href');
+                    // postLinks.push(`${site.link.slice(0, -1)}${link}`);
+                    let tempLink: string = `${site.link}${link}`;
+                    if(!postLinks.includes(tempLink)) {
+                        postLinks.push(tempLink);
+                        jobLinks.push(tempLink);
+                        postTitles.push(postTitle);
                     }
-                    break;
-            }
-            // });
-            site.jobs = tmpJobs;
+                });
 
-            // Return the array with all titles
-            // return postTitles.concat(postLinks);
-            // return site.jobs;
-            site.jobs.forEach((job) => {
-                jobs.push(job);
-            });
-        } catch (error) {
-            throw error;
+                // (async () => {
+                switch (site.name) {
+                    case 'Bayt':
+                        for (const link of jobLinks) {
+                            console.log(link);
+                            try {
+                                // postLinks.forEach((link) => {
+                                const { data } = await axios.get(link);
+                                const $ = cheerio.load(data);
+                                let id: number = jobsCounter;
+                                let name: string = $('div.media-d > div > div > h1.h3').text();
+                                let description: string = $('div.t-break > p').text();
+                                let company: string = $('div.p0 > ul.p0t > li > a.t-default').text();
+                                let location: string = '';
+                                $('div > ul > li > span > a.t-mute').each((_idx: number, el: any) => {
+                                    location += $(el).text() + ' ';
+                                });
+                                let date: string = $('div.m10y > span.u-none').text();
+                                // console.log("name: ", name, " - descriptionn: ", description);
+                                tmpJobs.push({
+                                    id: id,
+                                    name: name,
+                                    link: link,
+                                    description: description,
+                                    company: company,
+                                    location: location,
+                                    datePosted: date
+                                });
+                                jobsCounter ++;
+                                // $('div.t-break > p').each((_idx: number, el: any) => {
+                                //     description = $(el).text();
+                                // })
+                            } catch (error) {
+                                console.log("errorrr");
+                                // exit();
+                            }
+                        }
+                        break;
+                }
+                // });
+                site.jobs = tmpJobs;
+
+                // Return the array with all titles
+                // return postTitles.concat(postLinks);
+                // return site.jobs;
+                site.jobs.forEach((job) => {
+                    jobs.push(job);
+                    // console.log("idd: ", job.id,"linkk: ", job.link);
+                });
+            } catch (error) {
+                throw error;
+            }
         }
     }
     return jobs;
@@ -255,3 +266,11 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log("server listening on port: ", port);
 });
+
+
+
+
+
+/////  todo
+
+// scrape job requirements skills and qualifications too
