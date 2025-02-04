@@ -1,6 +1,8 @@
 # Job Match AI
 Node.js app leveraging AI to analyze resumes and match job listings using the Cheerio library for web scraping.
 
+It is functional but still under development.
+
 Features:
 - Resume Analysis: Uses AI to analyze the content of resumes and extract key information.
 - Job Scraping: Utilizes the Cheerio library to scrape job listings from multiple websites.
