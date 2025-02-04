@@ -3,8 +3,7 @@ import { job, site } from "./types/interfaces";
 // import { extractTextFromDOCX } from "./utils/textFromFile";
 // import { exit } from "process";
 import { openai } from "./utils/openAIHelper";
-import { exit } from "process";
-
+import { Search } from "./schema/schema";
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
@@ -58,7 +57,7 @@ app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
                     "jobs": 
                     [
                     'job example 1',
-                    'job example 2', ...
+                    'job example 2'
                     ]
                     }
 
@@ -68,7 +67,7 @@ app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
             ]
         });
 
-        const temp = JSON.parse(jobAnalysis.choices[0]?.message?.content?.trim() || 'jobs:[\'\']').jobs;
+        const temp = JSON.parse(jobAnalysis.choices[0]?.message?.content?.trim() || '{"jobs":[""]}').jobs;
         const suggestedJobTitles: string[] = temp ?? [];
 
         console.log("SUGGESTEDDDD:  ", suggestedJobTitles.toString());
@@ -275,6 +274,7 @@ const getPostTitles = async (jobTitles: string[]) => {
             }
         }
     }
+    Search(jobs);
     return jobs;
 }
 
