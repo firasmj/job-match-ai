@@ -13,6 +13,22 @@ const cheerio = require('cheerio');
 
 const app = express();
 
+// Error handling middleware for multer
+app.use((error: any, req: any, res: any, next: any) => {
+    if (error instanceof multer.MulterError) {
+        if (error.code === 'LIMIT_FILE_SIZE') {
+            return res.status(400).json({ error: 'File too large. Maximum size is 2MB.' });
+        }
+        return res.status(400).json({ error: `File upload error: ${error.message}` });
+    }
+
+    if (error.message === 'Invalid file type. Only docx and pdf are allowed.') {
+        return res.status(400).json({ error: error.message });
+    }
+
+    next(error);
+});
+
 const storage = multer.diskStorage({
     destination: (req: any, res: any, cb: any) => {
         const uploadPath = path.join(__dirname, 'uploads');
@@ -43,16 +59,50 @@ const upload = multer({
 // route to upload a resume docx file
 app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
     try {
-        // const extractedText = req.file != null ? await extractTextFromDOCX(req.file.path) : 'no file';
-        const extractedText = await mammoth.extractRawText({ path: req.file.path });
-        // console.log('extractedText: ', extractedText.value);
+        // Check if file was uploaded
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        // Check if file path exists
+        if (!req.file.path) {
+            return res.status(400).json({ error: 'File path is missing' });
+        }
+
+        // Check if file exists on disk
+        if (!fs.existsSync(req.file.path)) {
+            return res.status(400).json({ error: 'Uploaded file not found on server' });
+        }
+
+        console.log('Processing file:', req.file.path);
+        console.log('File mimetype:', req.file.mimetype);
+
+        let extractedText: any;
+
+        // Handle different file types
+        if (req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            // Handle DOCX files
+            extractedText = await mammoth.extractRawText({ path: req.file.path });
+        } else if (req.file.mimetype === 'application/pdf') {
+            // For now, return an error for PDF files as we need a PDF parser
+            return res.status(400).json({ error: 'PDF files are not yet supported. Please upload a DOCX file.' });
+        } else {
+            return res.status(400).json({ error: 'Unsupported file type' });
+        }
+
+        // Check if text extraction was successful
+        if (!extractedText || !extractedText.value) {
+            return res.status(400).json({ error: 'Failed to extract text from the document' });
+        }
+
+        console.log('Extracted text length:', extractedText.value.length);
 
         const jobAnalysis = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
             messages: [
                 { role: 'system', content: 'You are a helpful assistant.' },
                 {
-                    role: 'user', content: `Analyze the following resume and suggest job titles in the following string array format. Return only 2 most suitable job titles only. Respond with only the JSON object, without any formatting markers or triple backticks.:
+                    role: 'user', content: `Analyze the following resume and suggest job titles in the following string array format. Return only 1 most suitable job titles only. Respond with only the JSON object, without any formatting markers or triple backticks.:
                     {
                     "jobs": 
                     [
@@ -95,10 +145,36 @@ app.post('/upload', upload.single("document1"), async (req: any, res: any) => {
             console.log("FINALJOBS", finalJobs);
             let filteredJobs: job[] = jobs.filter((job) => final.includes(Number(job.id)));
             console.log("Filtered JOBSSS: ", JSON.stringify(filteredJobs));
+
+            // Clean up uploaded file after successful processing
+            if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+                try {
+                    fs.unlinkSync(req.file.path);
+                    console.log('Cleaned up uploaded file after successful processing');
+                } catch (cleanupError) {
+                    console.error('Error cleaning up file:', cleanupError);
+                }
+            }
+
             res.json(filteredJobs);
         }
     } catch (error) {
-        console.log(error);
+        console.error('Error processing upload:', error);
+
+        // Clean up uploaded file if it exists
+        if (req.file && req.file.path && fs.existsSync(req.file.path)) {
+            try {
+                fs.unlinkSync(req.file.path);
+                console.log('Cleaned up uploaded file after error');
+            } catch (cleanupError) {
+                console.error('Error cleaning up file:', cleanupError);
+            }
+        }
+
+        res.status(500).json({
+            error: 'Internal server error processing file',
+            message: error instanceof Error ? error.message : 'Unknown error'
+        });
     }
 });
 
@@ -146,6 +222,7 @@ const sitesData: site[] = [
         jobsLink: "https://www.bayt.com/en/lebanon/jobs/",
         location: "div > ul > li > div > h2 > a",
         jobs: [],
+        //this now has protection against scraping, so it won't work with cheerio alone for now
     }
 ]
 
@@ -175,14 +252,26 @@ const getPostTitles = async (jobTitles: string[]) => {
                         break;
                 }
 
-                const { data } = await axios.get(
-                    // 'https://www.hirelebanese.com/searchresults.aspx?resume=0&top=0&location=&company=&category=10'
-                    // "https://www.naukrigulf.com/engineering-jobs"
-                    // "https://lebanon.tanqeeb.com/s/jobs/ember-jobs"
-                    // "https://www.bayt.com/en/lebanon/jobs/software-jobs/"
-                    // site.jobsLink + title.replace(/\s+/g, '-') + '-jobs'
-                    searchLink
-                );
+                const { data } = await axios.get(searchLink, {
+                    // headers: {
+                    //     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    //     'Accept-Language': 'en-US,en;q=0.9',
+                    //     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+                    //     'Connection': 'keep-alive',
+                    // },
+                    headers: {
+                        "User-Agent":
+                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                            "(KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
+                        "Accept":
+                            "text/html,application/xhtml+xml,application/xml;q=0.9," +
+                            "image/avif,image/webp,image/apng,*/*;q=0.8",
+                        "Accept-Language": "en-US,en;q=0.9",
+                        "Accept-Encoding": "gzip, deflate, br",
+                        "Referer": "https://google.com/",
+                        "Connection": "keep-alive",
+                    },
+                });
 
                 // Parse HTML with Cheerio
                 const $ = cheerio.load(data);
@@ -279,175 +368,6 @@ const getPostTitles = async (jobTitles: string[]) => {
 }
 
 
-//////////testing
-
-// const getp = async () => {
-
-//     const jobs: job[] = [];
-//     const jobTitles: string[] = ['software developer'];
-
-//     for (const site of sitesData) {
-//         // sitesData.forEach((site) => {
-
-//         //let url: string = '';
-
-//         // Initialise empty data array
-//         const postTitles: string[] = [];
-//         const postLinks: string[] = [];
-//         let jobsCounter: number = 0;
-
-//         for (const title of jobTitles) {
-//             try {
-//                 let tmpJobs: job[] = [];
-//                 let jobLinks: string[] = [];
-//                 // for (let i = 0; i < sitesData.length; i++) {
-//                 //     switch (sitesData[i].name) {
-//                 //         case 'Tanqeeb':
-//                 //             url = sitesData[i].link;
-//                 //     }
-//                 // }
-//                 let searchLink: string = '';
-//                 switch (site.name) {
-//                     case "Hire Lebanese":
-//                         searchLink = site.jobsLink.replace('#', title);
-//                         break;
-//                     case "Bayt":
-//                         searchLink = site.jobsLink + title.replace(/\s+/g, '-') + '-jobs';
-//                         break;
-//                 }
-//                 const { data } = await axios.get(
-//                     // 'https://www.hirelebanese.com/searchresults.aspx?resume=0&top=0&location=&company=&category=10'
-//                     // "https://www.naukrigulf.com/engineering-jobs"
-//                     // "https://lebanon.tanqeeb.com/s/jobs/ember-jobs"
-//                     // "https://www.bayt.com/en/lebanon/jobs/software-jobs/"
-//                     // site.jobsLink + title.replace(/\s+/g, '-') + '-jobs'
-//                     searchLink
-//                 );
-
-//                 // Parse HTML with Cheerio
-//                 const $ = cheerio.load(data);
-
-//                 // // Initialise empty data array
-//                 // const postTitles: string[] = [];
-//                 // const postLinks: string[] = [];
-
-//                 // Iterate over all anchor links for the given selector and ....
-//                 // $('div > h4 > a').each((_idx:number, el:any) => {
-//                 // $('h2 .hover-title').each((_idx:number, el:any) => {
-//                 $(site.location).each((_idx: number, el: any) => {
-//                     // .... extract for each the tag text and add it to the data array
-//                     const postTitle: string = $(el).text().trim();
-//                     const link: string = $(el).attr('href');
-//                     // postLinks.push(`${site.link.slice(0, -1)}${link}`);
-//                     let tempLink: string = `${site.link}${link}`;
-//                     if (!postLinks.includes(tempLink)) {
-//                         postLinks.push(tempLink);
-//                         jobLinks.push(tempLink);
-//                         postTitles.push(postTitle);
-//                     }
- 
-//                 });
-//                 console.log(postTitles.toString());
-//                 // (async () => {
-//                 // switch (site.name) {
-//                 //     case 'Bayt':
-//                 //         for (const link of jobLinks) {
-//                 //             console.log(link);
-//                 //             try {
-//                 //                 // postLinks.forEach((link) => {
-//                 //                 const { data } = await axios.get(link);
-//                 //                 const $ = cheerio.load(data);
-//                 //                 let id: number = jobsCounter;
-//                 //                 let name: string = $('div.media-d > div > div > h1.h3').text();
-//                 //                 let description: string = $('div.t-break > p').text();
-//                 //                 let company: string = $('div.p0 > ul.p0t > li > a.t-default').text();
-//                 //                 let location: string = '';
-//                 //                 $('div > ul > li > span > a.t-mute').each((_idx: number, el: any) => {
-//                 //                     location += $(el).text() + ' ';
-//                 //                 });
-//                 //                 let date: string = $('div.m10y > span.u-none').text();
-//                 //                 // console.log("name: ", name, " - descriptionn: ", description);
-//                 //                 tmpJobs.push({
-//                 //                     id: id,
-//                 //                     name: name,
-//                 //                     link: link,
-//                 //                     description: description,
-//                 //                     company: company,
-//                 //                     location: location,
-//                 //                     datePosted: date
-//                 //                 });
-//                 //                 jobsCounter++;
-//                 //                 // $('div.t-break > p').each((_idx: number, el: any) => {
-//                 //                 //     description = $(el).text();
-//                 //                 // })
-//                 //             } catch (error) {
-//                 //                 console.log("errorrr");
-//                 //                 // exit();
-//                 //             }
-//                 //         }
-//                 //         break;
-//                 //     case 'Hire Lebanese':
-//                 //         for (const link of jobLinks) {
-//                 //             console.log(link);
-//                 //             try {
-//                 //                 // postLinks.forEach((link) => {
-//                 //                 const { data } = await axios.get(link);
-//                 //                 const $ = cheerio.load(data);
-//                 //                 let id: number = jobsCounter;
-//                 //                 let name: string = $('div.media-d > div > div > h1.h3').text();
-//                 //                 let description: string = $('div.t-break > p').text();
-//                 //                 let company: string = $('div.p0 > ul.p0t > li > a.t-default').text();
-//                 //                 let location: string = '';
-//                 //                 $('div > ul > li > span > a.t-mute').each((_idx: number, el: any) => {
-//                 //                     location += $(el).text() + ' ';
-//                 //                 });
-//                 //                 let date: string = $('div.m10y > span.u-none').text();
-//                 //                 // console.log("name: ", name, " - descriptionn: ", description);
-//                 //                 tmpJobs.push({
-//                 //                     id: id,
-//                 //                     name: name,
-//                 //                     link: link,
-//                 //                     description: description,
-//                 //                     company: company,
-//                 //                     location: location,
-//                 //                     datePosted: date
-//                 //                 });
-//                 //                 jobsCounter++;
-//                 //                 // $('div.t-break > p').each((_idx: number, el: any) => {
-//                 //                 //     description = $(el).text();
-//                 //                 // })
-//                 //             } catch (error) {
-//                 //                 console.log("errorrr");
-//                 //                 // exit();
-//                 //             }
-//                 //         }
-//                 //         break;
-//                 // }
-//                 // // });
-//                 // site.jobs = tmpJobs;
-
-//                 // // Return the array with all titles
-//                 // // return postTitles.concat(postLinks);
-//                 // // return site.jobs;
-//                 // site.jobs.forEach((job) => {
-//                 //     jobs.push(job);
-//                 //     // console.log("idd: ", job.id,"linkk: ", job.link);
-//                 // });
-//             } catch (error) {
-//                 throw error;
-//             }
-//         }
-//     }
-//     return jobs;
-// }
-
-// getPostTitles()
-//     .then((postTitles) => postTitles?.forEach((job) => { console.log(JSON.stringify(job)) }));
-
-// getp()
-//     .then((postTitles) => postTitles?.forEach((job) => { console.log(JSON.stringify(job)) }));
-
-//////////testing
 
 const port = process.env.PORT || 3000;
 
