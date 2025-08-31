@@ -1,9 +1,8 @@
 import axios from "axios";
 import { job, site } from "./types/interfaces";
-// import { extractTextFromDOCX } from "./utils/textFromFile";
-// import { exit } from "process";
 import { openai } from "./utils/openAIHelper";
 import { Search } from "./schema/schema";
+import { testUrl } from "./test/axiosUrlTest";
 const express = require("express");
 const multer = require("multer");
 const path = require("path");
@@ -12,6 +11,8 @@ const mammoth = require('mammoth');
 const cheerio = require('cheerio');
 
 const app = express();
+
+app.use(express.json());
 
 // Error handling middleware for multer
 app.use((error: any, req: any, res: any, next: any) => {
@@ -28,6 +29,24 @@ app.use((error: any, req: any, res: any, next: any) => {
 
     next(error);
 });
+
+
+app.post('/testUrl', async (req: any, res: any, next: any) => {
+    try {
+        // get url from post json payload
+        const url = await req?.body?.url;
+        console.log("Testing URL:", url);
+        const response = await testUrl(url);
+        res.json({
+            message: 'URL tested successfully',
+            content: response,
+            ok: true
+        });
+    } catch (error) {
+        next(error);
+    }
+});
+
 
 const storage = multer.diskStorage({
     destination: (req: any, res: any, cb: any) => {
@@ -208,6 +227,14 @@ const sitesData: site[] = [
     //     //this is not available for all countries, this may be a SPA
     // },
     {
+        name: "Jobs For Lebanon",
+        link: "https://www.jobsforlebanon.com",
+        jobsLink: "https://www.jobsforlebanon.com/wp-admin/admin-ajax.php",
+        location: "a.catalogue-job-title-text",
+        jobs: []
+        // new target :)
+    },
+    {
         name: "Hire Lebanese",
         link: "https://hirelebanese.com/",
         // jobsLink: "https://hirelebanese.com/searchresults.aspx?order=date&keywords=software%2bdeveloper&category=&type=&duration=&country=117,241,258,259,260&state=&city=&emp=&pg=1&s=-1&top=0",
@@ -215,15 +242,15 @@ const sitesData: site[] = [
         location: "div.panel-title > h4 > a",
         jobs: []
     },
-    {
-        name: "Bayt",
-        // link: "https://www.bayt.com/en/lebanon/jobs/software-jobs/",
-        link: "https://www.bayt.com",
-        jobsLink: "https://www.bayt.com/en/lebanon/jobs/",
-        location: "div > ul > li > div > h2 > a",
-        jobs: [],
-        //this now has protection against scraping, so it won't work with cheerio alone for now
-    }
+    // {
+    //     name: "Bayt",
+    //     // link: "https://www.bayt.com/en/lebanon/jobs/software-jobs/",
+    //     link: "https://www.bayt.com",
+    //     jobsLink: "https://www.bayt.com/en/lebanon/jobs/",
+    //     location: "div > ul > li > div > h2 > a",
+    //     jobs: [],
+    //     //this now has protection against scraping (CloudFlare), so I stopped it for now
+    // }
 ]
 
 const getPostTitles = async (jobTitles: string[]) => {
@@ -242,54 +269,84 @@ const getPostTitles = async (jobTitles: string[]) => {
                 let tmpJobs: job[] = [];
                 let jobLinks: string[] = [];
                 let searchLink: string = '';
+                let responseData: any;
 
                 switch (site.name) {
+                    case "Jobs For Lebanon":
+                        const body = new URLSearchParams({
+                            action: 'jfh_ajax_get_jobs',
+                            offset: '0',
+                            limit: '15', // Or a higher limit if needed
+                            'options[terms]': title
+                        });
+
+                        const { data: jobsForLebanonData } = await axios.post(site.jobsLink, body, {
+                            headers: {
+                                'accept': 'text/html',
+                                'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                                'origin': 'https://www.jobsforlebanon.com',
+                                'referer': `https://www.jobsforlebanon.com/search/?filters=1&terms=${encodeURIComponent(title)}`,
+                                'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+                                'x-requested-with': 'XMLHttpRequest'
+                            }
+                        });
+                        responseData = jobsForLebanonData;
+                        break;
                     case "Hire Lebanese":
                         searchLink = site.jobsLink.replace('#', title);
+                        const { data: hireLebaneseData } = await axios.get(searchLink, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" } });
+                        responseData = hireLebaneseData;
                         break;
                     case "Bayt":
                         searchLink = site.jobsLink + title.replace(/\s+/g, '-') + '-jobs';
+                        const { data: baytData } = await axios.get(searchLink, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" } });
+                        responseData = baytData;
                         break;
                 }
 
-                const { data } = await axios.get(searchLink, {
-                    // headers: {
-                    //     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                    //     'Accept-Language': 'en-US,en;q=0.9',
-                    //     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-                    //     'Connection': 'keep-alive',
-                    // },
-                    headers: {
-                        "User-Agent":
-                            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                            "(KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36",
-                        "Accept":
-                            "text/html,application/xhtml+xml,application/xml;q=0.9," +
-                            "image/avif,image/webp,image/apng,*/*;q=0.8",
-                        "Accept-Language": "en-US,en;q=0.9",
-                        "Accept-Encoding": "gzip, deflate, br",
-                        "Referer": "https://google.com/",
-                        "Connection": "keep-alive",
-                    },
-                });
-
                 // Parse HTML with Cheerio
-                const $ = cheerio.load(data);
+                const $ = cheerio.load(responseData);
 
                 $(site.location).each((_idx: number, el: any) => {
-                    const postTitle: string = $(el).text().trim();
                     const link: string = $(el).attr('href');
-                    let tempLink: string = `${site.link}${link}`;
+                    let tempLink: string = site.name === 'Jobs For Lebanon' ? link : `${site.link}${link}`;
 
-                    if (!postLinks.includes(tempLink)) {
+                    if (link && !postLinks.includes(tempLink)) {
                         postLinks.push(tempLink);
                         jobLinks.push(tempLink);
-                        postTitles.push(postTitle);
                     }
 
                 });
 
                 switch (site.name) {
+                    case 'Jobs For Lebanon':
+                        for (const link of jobLinks) {
+                            console.log(link);
+                            try {
+                                const { data } = await axios.get(link);
+                                const $ = cheerio.load(data);
+                                let id: number = jobsCounter;
+                                let name: string = $('h1[style="font-weight: bold;"]').text().trim();
+                                let description: string = $('section:has(h3:contains("Job Description")) > div > div').text().trim();
+                                let company: string = $('h2[style="font-size: 1.5rem; font-weight: 600;"]').text().trim();
+                                let location: string = $('header.header > div > span').first().text().trim();
+                                let date: string = ''; // Date is not available on the job page
+                                tmpJobs.push({
+                                    id: id,
+                                    name: name,
+                                    link: link,
+                                    description: description,
+                                    company: company,
+                                    location: location,
+                                    datePosted: date
+                                });
+                                jobsCounter++;
+
+                            } catch (error) {
+                                console.log("Error fetching job details for Jobs For Lebanon:", error instanceof Error ? error.message : "Unknown error");
+                            }
+                        }
+                        break;
                     case 'Bayt':
                         for (const link of jobLinks) {
                             console.log(link);
@@ -363,7 +420,10 @@ const getPostTitles = async (jobTitles: string[]) => {
             }
         }
     }
+
+    // Initialize GraphQL server
     Search(jobs);
+
     return jobs;
 }
 

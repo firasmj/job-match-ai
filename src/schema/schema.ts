@@ -10,7 +10,7 @@ const express = require("express");
 
 export const Search = (jobs: job[]) => {
 
-    
+
     const typeDefs = `#graphql
         type Job {
             id: ID
@@ -44,15 +44,15 @@ export const Search = (jobs: job[]) => {
 
     async function startServer() {
         await server.start();
-      
+
         const app = express();
         app.use('/graphql', cors(), bodyParser.json(), expressMiddleware(server));
-      
+
         app.listen(4000, () => {
-          console.log(`Server running at http://localhost:4000/graphql`);
+            console.log(`Server running at http://localhost:4000/graphql`);
         });
-      }
-      
-      startServer();
+    }
+
+    startServer();
 
 }
