@@ -109,7 +109,7 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                 }
 
                 // Parse HTML with Cheerio
-                const $ = cheerio?.load(responseData);
+                const $ = cheerio?.load(responseData as string);
 
                 $(site.location).each((_idx: number, el: any) => {
                     const link: string = $(el).attr('href') ?? '';
@@ -128,7 +128,7 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                             console.log(link);
                             try {
                                 const { data } = await axios.get(link);
-                                const $ = cheerio?.load(data);
+                                const $ = cheerio?.load(data as string);
                                 let id: number = jobsCounter;
                                 let name: string = $('h1[style="font-weight: bold;"]').text().trim();
                                 let description: string = $('section:has(h3:contains("Job Description")) > div > div').text().trim();
@@ -156,7 +156,7 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                             console.log(link);
                             try {
                                 const { data } = await axios.get(link);
-                                const $ = cheerio?.load(data);
+                                const $ = cheerio?.load(data as string);
                                 let id: number = jobsCounter;
                                 let name: string = $('div.media-d > div > div > h1.h3').text();
                                 let description: string = $('div.t-break > p').text();
@@ -189,7 +189,7 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                             console.log(link);
                             try {
                                 const { data } = await axios.get(link);
-                                const $ = cheerio?.load(data);
+                                const $ = cheerio?.load(data as string);
                                 let id: number = jobsCounter;
                                 let name: string = $('div.col-sm-12 > h3 > span.h2').text();
                                 let description: string = $('div.white-div > div.padding-top > div.col-sm-12 > #description').text();

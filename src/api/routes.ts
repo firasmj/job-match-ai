@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { uploadFile, testUrlController } from '../controllers/jobController';
+import { parseResume, parseResumeText } from '../controllers/resumeController';
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
@@ -33,7 +34,12 @@ const upload = multer({
     }
 });
 
+// Job matching routes
 router.post('/upload', upload.single("document1"), uploadFile);
 router.post('/testUrl', testUrlController);
+
+// Resume parsing routes
+router.post('/resume/parse', upload.single("resume"), parseResume);
+router.post('/resume/parse-text', parseResumeText);
 
 export default router;
