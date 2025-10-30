@@ -54,7 +54,14 @@ const sitesData: site[] = [
     //     location: "div > ul > li > div > h2 > a",
     //     jobs: [],
     //     //this now has protection against scraping (CloudFlare), so I stopped it for now
-    // }
+    // },
+    {
+        name: "OLX Lebanon",
+        link: "https://www.olx.com.lb/",
+        jobsLink: "https://www.olx.com.lb/jobs/jobs-available",
+        location: 'li[aria-label="Listing"]',
+        jobs: []
+    }
 ];
 
 export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefined> => {
@@ -106,14 +113,27 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                         const { data: baytData } = await axios.get(searchLink, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" } });
                         responseData = baytData;
                         break;
+                    case "OLX Lebanon":
+                        searchLink = site.jobsLink + '/q-' + title.replace(/\s+/g, '-');
+                        const { data: olxData } = await axios.get(searchLink, { headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" } });
+                        responseData = olxData;
+                        break;
                 }
 
                 // Parse HTML with Cheerio
                 const $ = cheerio?.load(responseData as string);
 
                 $(site.location).each((_idx: number, el: any) => {
-                    const link: string = $(el).attr('href') ?? '';
-                    let tempLink: string = site.name === 'Jobs For Lebanon' ? link : `${site.link}${link}`;
+                    const link: string = site.name === 'OLX Lebanon' ? $(el).find('a[title]').attr('href') ?? '' : $(el).attr('href') ?? ''; // Corrected to find 'a' within the listing 'li'
+                    let tempLink: string = '';
+
+                    if (site.name === 'Jobs For Lebanon') {
+                        tempLink = link;
+                    } else if (site.name === 'OLX Lebanon') {
+                        tempLink = `${site.link}${link.substring(1)}`; // Build full URL for OLX
+                    } else {
+                        tempLink = `${site.link}${link}`;
+                    }
 
                     if (link && !postLinks.includes(tempLink)) {
                         postLinks.push(tempLink);
@@ -135,8 +155,9 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                                 let company: string = $('h2[style="font-size: 1.5rem; font-weight: 600;"]').text().trim();
                                 let location: string = $('header.header > div > span').first().text().trim();
                                 let date: string = ''; // Date is not available on the job page
+                                console.log("name: ", name, " - descriptionn: ", description);
                                 tmpJobs.push({
-                                    id: id,
+                                    id: id, // Ensure ID is a string to match interface
                                     name: name,
                                     link: link,
                                     description: description,
@@ -166,9 +187,9 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                                     location += $(el).text() + ' ';
                                 });
                                 let date: string = $('div.m10y > span.u-none').text();
-                                // console.log("name: ", name, " - descriptionn: ", description);
+                                console.log("name: ", name, " - descriptionn: ", description);
                                 tmpJobs.push({
-                                    id: id,
+                                    id: id, // Ensure ID is a string to match interface
                                     name: name,
                                     link: link,
                                     description: description,
@@ -196,9 +217,9 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                                 let company: string = $('#company').text();
                                 let location: string = $('#location').text();
                                 let date: string = $('#date').text();
-                                // console.log("name: ", name, " - descriptionn: ", description);
+                                console.log("name: ", name, " - descriptionn: ", description);
                                 tmpJobs.push({
-                                    id: id,
+                                    id: id, // Ensure ID is a string to match interface
                                     name: name,
                                     link: link,
                                     description: description,
@@ -212,6 +233,64 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                             }
                         }
                         break;
+                    
+                    // --- START OF CORRECTED OLX BLOCK ---
+                    case 'OLX Lebanon':
+                        for (const link of jobLinks) {
+                            try {
+                                // 1. Fetch the detail page for each link
+                                const { data: detailData } = await axios.get(link, {
+                                    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" }
+                                });
+
+                                // 2. Load the detail page HTML into a new Cheerio instance
+                                const $detail = cheerio.load(detailData as string);
+
+                                // 3. Extract data using selectors from the detail page HTML
+                                
+                                // ID
+                                const idMatch = link.match(/-ID(\d+)\.html$/);
+                                const id = idMatch ? idMatch[1] : jobsCounter;
+
+                                // Name
+                                const name = $detail('h1._75bce902').text().trim();
+                                
+                                // Location
+                                const location = $detail('span[aria-label="Location"]').text().trim();
+
+                                // Date Posted
+                                const datePosted = $detail('span[aria-label="Creation date"]').text().trim();
+
+                                // Description & Company (from description text)
+                                const descriptionText = $detail('div[aria-label="Description"] ._472bfbef').text().trim();
+                                let description: string = descriptionText;
+                                let company: string | undefined = undefined;
+                                
+                                // Use the same split logic as before
+                                const parts = descriptionText.split(' : ');
+                                if (parts.length > 1) {
+                                    company = parts[0].trim();
+                                    description = parts.slice(1).join(' : ').trim();
+                                }
+                                console.log("name: ", name, " - descriptionn: ", description);
+                                // 4. Push the job object
+                                tmpJobs.push({
+                                    id: parseInt(id.toString()), // Ensure ID is a number
+                                    name: name,
+                                    link: link,
+                                    description: description,
+                                    company: company,
+                                    location: location,
+                                    datePosted: datePosted
+                                });
+                                jobsCounter++;
+
+                            } catch (error) {
+                                console.error(`Error fetching job details for OLX link ${link}:`, error instanceof Error ? error.message : "Unknown error");
+                            }
+                        }
+                        break;
+                    // --- END OF CORRECTED OLX BLOCK ---
                 }
                 site.jobs = tmpJobs;
 
@@ -220,7 +299,8 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                     // console.log("idd: ", job.id,"linkk: ", job.link);
                 });
             } catch (error) {
-                throw error;
+                console.error(`Failed to scrape site ${site.name} for title ${title}:`, error);
+                // Continue to the next site/title even if one fails
             }
         }
     }
