@@ -1,6 +1,10 @@
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { job, site } from "../types/interfaces";
+import { mockJobs } from "../utils/mockData";
+
+// Check if testing mode is enabled
+const TESTING_MODE = process.env.TESTING_MODE === 'true';
 
 const sitesData: site[] = [
     // {
@@ -65,6 +69,12 @@ const sitesData: site[] = [
 ];
 
 export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefined> => {
+    
+    // Return mock data if testing mode is enabled
+    if (TESTING_MODE) {
+        console.log('🧪 TESTING MODE: Returning mock job data');
+        return mockJobs;
+    }
 
     const jobs: job[] = [];
     let jobsCounter: number = 0;

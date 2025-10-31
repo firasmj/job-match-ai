@@ -8,6 +8,17 @@ export interface job{
     datePosted?: string;
 }
 
+export interface JobMatch {
+    job: job;
+    matchScore: number;
+    matchPercentage: number;
+    rank: number;
+    strengths: string[];
+    weaknesses: string[];
+    missingRequirements: string[];
+    recommendations: string[];
+}
+
 export interface site {
     name: string;
     link: string;

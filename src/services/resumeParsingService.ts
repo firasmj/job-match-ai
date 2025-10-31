@@ -1,5 +1,9 @@
 import { openai } from '../utils/openAIHelper';
 import { ParsedResume } from '../types/resumeInterfaces';
+import { mockParsedResume } from '../utils/mockData';
+
+// Check if testing mode is enabled
+const TESTING_MODE = process.env.TESTING_MODE === 'true';
 
 const RESUME_PARSING_SYSTEM_PROMPT = `You are an expert resume parser. Your task is to extract and organize information from resumes into a structured JSON format.
 
@@ -231,6 +235,14 @@ const validateAndNormalizeResume = (data: any): ParsedResume => {
 
 export const parseResumeWithAI = async (resumeText: string): Promise<ParsedResume> => {
     try {
+        // Return mock data if testing mode is enabled
+        if (TESTING_MODE) {
+            console.log('🧪 TESTING MODE: Returning mock parsed resume');
+            // Simulate AI processing delay
+            await new Promise(resolve => setTimeout(resolve, 500));
+            return mockParsedResume;
+        }
+
         const response = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
             messages: [
