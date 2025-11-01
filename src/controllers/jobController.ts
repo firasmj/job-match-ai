@@ -1,8 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import { openai } from '../utils/openAIHelper';
 import { getPostTitles } from '../services/scrapingService';
 import { job, JobMatch } from '../types/interfaces';
 import { mockJobMatches } from '../utils/mockData';
+import { progressEmitter } from '../websocket/progressEmitter';
 const mammoth = require('mammoth');
 const fs = require('fs');
 
@@ -10,36 +12,101 @@ const fs = require('fs');
 const TESTING_MODE = process.env.TESTING_MODE === 'true';
 
 export const uploadFile = async (req: any, res: Response, next: NextFunction) => {
+    const providedId = typeof req?.body?.progressId === 'string' ? req.body.progressId.trim() : undefined;
+    const headerIdRaw = req?.headers?.['x-progress-id'];
+    const headerId = typeof headerIdRaw === 'string' ? headerIdRaw.trim() : Array.isArray(headerIdRaw) ? headerIdRaw[0] : undefined;
+    const progressId = providedId || headerId || randomUUID();
+
+    res.setHeader('X-Progress-Id', progressId);
+
     try {
         // Return mock data if testing mode is enabled
         if (TESTING_MODE) {
             console.log('🧪 TESTING MODE: Returning mock job matching data');
             // Simulate processing delay
             await new Promise(resolve => setTimeout(resolve, 1000));
-            return res.json(mockJobMatches);
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'testing',
+                message: 'Testing mode enabled. Returning mock job matches.'
+            });
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'completed',
+                message: 'Mock job matches ready.',
+                meta: { matchedJobs: mockJobMatches.length }
+            });
+            return res.json({
+                progressId,
+                matches: mockJobMatches
+            });
         }
 
         if (!req.file) {
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'error',
+                message: 'No file uploaded.'
+            });
             return res.status(400).json({ error: 'No file uploaded' });
         }
 
         if (!req.file.path || !fs.existsSync(req.file.path)) {
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'error',
+                message: 'Uploaded file not found on server.'
+            });
             return res.status(400).json({ error: 'Uploaded file not found on server' });
         }
 
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'resume_received',
+            message: 'Resume received and ready for processing.',
+            meta: { filename: req.file.originalname }
+        });
+
         let extractedText: any;
+
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'extracting_text',
+            message: 'Extracting text from uploaded resume.'
+        });
 
         if (req.file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
             extractedText = await mammoth.extractRawText({ path: req.file.path });
         } else if (req.file.mimetype === 'application/pdf') {
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'error',
+                message: 'PDF files are not yet supported. Please upload a DOCX file.'
+            });
             return res.status(400).json({ error: 'PDF files are not yet supported. Please upload a DOCX file.' });
         } else {
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'error',
+                message: 'Unsupported file type uploaded.'
+            });
             return res.status(400).json({ error: 'Unsupported file type' });
         }
 
         if (!extractedText || !extractedText.value) {
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'error',
+                message: 'Failed to extract text from the document.'
+            });
             return res.status(400).json({ error: 'Failed to extract text from the document' });
         }
+
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'generating_job_titles',
+            message: 'Generating suggested job titles from resume.'
+        });
 
         const jobAnalysis = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
@@ -64,13 +131,43 @@ export const uploadFile = async (req: any, res: Response, next: NextFunction) =>
         const temp = JSON.parse(jobAnalysis.choices[0]?.message?.content?.trim() || '{"jobs":[""]}').jobs;
         const suggestedJobTitles: string[] = temp ?? [];
 
-        const jobs: job[] | undefined = await getPostTitles(suggestedJobTitles);
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'job_titles_ready',
+            message: 'Suggested job titles generated from resume analysis.',
+            meta: { suggestedJobTitles }
+        });
+
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'scraping_started',
+            message: 'Scraping job listings for suggested titles.',
+            meta: { suggestedJobTitleCount: suggestedJobTitles.length }
+        });
+
+        const jobs: job[] | undefined = await getPostTitles(suggestedJobTitles, { progressId });
 
         if (!jobs || jobs.length === 0) {
-            return res.json({ matches: [], message: 'No jobs found' });
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'finalizing',
+                message: 'No jobs found during scraping.'
+            });
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'completed',
+                message: 'Job matching completed with no results.',
+                meta: { totalJobs: 0, matchedJobs: 0 }
+            });
+            return res.json({ progressId, matches: [], message: 'No jobs found' });
         }
 
         // Analyze and rank jobs with strengths/weaknesses
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'ai_filtering',
+            message: 'Analyzing scraped jobs against resume.'
+        });
         const jobMatchingAnalysis = await openai.chat.completions.create({
             model: 'gpt-4o-mini',
             messages: [
@@ -118,8 +215,13 @@ Analyze ALL ${jobs.length} jobs.`
         });
 
         const analysisContent = jobMatchingAnalysis.choices[0]?.message?.content?.trim();
-        
+
         if (!analysisContent) {
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'error',
+                message: 'Failed to analyze job matches.'
+            });
             return res.status(500).json({ error: 'Failed to analyze job matches' });
         }
 
@@ -132,11 +234,16 @@ Analyze ALL ${jobs.length} jobs.`
             }
         } catch (parseError) {
             console.error('Failed to parse analysis:', parseError);
+            progressEmitter.emitProgress({
+                progressId,
+                stage: 'error',
+                message: 'Failed to parse job analysis response.'
+            });
             return res.status(500).json({ error: 'Failed to parse job analysis' });
         }
 
         // Create JobMatch objects
-        const jobMatches: JobMatch[] = Array.isArray(analysisData) 
+        const jobMatches: JobMatch[] = Array.isArray(analysisData)
             ? analysisData.map((analysis: any) => {
                 const job = jobs.find(j => j.id === analysis.jobId);
                 if (!job) return null;
@@ -154,19 +261,45 @@ Analyze ALL ${jobs.length} jobs.`
             }).filter((match): match is JobMatch => match !== null)
             : [];
 
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'analysis_ready',
+            message: 'Job analysis completed. Ranking matches.'
+        });
+
         // Sort by match score (highest first) and assign ranks
         jobMatches.sort((a, b) => b.matchScore - a.matchScore);
         jobMatches.forEach((match, index) => {
             match.rank = index + 1;
         });
 
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'finalizing',
+            message: 'Finalizing job matches for response.',
+            meta: { matchedJobs: jobMatches.length }
+        });
+
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'completed',
+            message: 'Job matching completed successfully.',
+            meta: { totalJobs: jobs.length, matchedJobs: jobMatches.length }
+        });
+
         res.json({
+            progressId,
             totalJobs: jobs.length,
             matchedJobs: jobMatches.length,
             matches: jobMatches
         });
 
     } catch (error) {
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'error',
+            message: error instanceof Error ? error.message : 'Unknown error occurred during job upload.'
+        });
         next(error);
     } finally {
         if (req.file && req.file.path && fs.existsSync(req.file.path)) {

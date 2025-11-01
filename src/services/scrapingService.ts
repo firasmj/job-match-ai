@@ -2,6 +2,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { job, site } from "../types/interfaces";
 import { mockJobs } from "../utils/mockData";
+import { progressEmitter } from "../websocket/progressEmitter";
 
 // Check if testing mode is enabled
 const TESTING_MODE = process.env.TESTING_MODE === 'true';
@@ -68,18 +69,35 @@ const sitesData: site[] = [
     }
 ];
 
-export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefined> => {
+export interface ScrapingProgressContext {
+    progressId?: string;
+}
+
+export const getPostTitles = async (jobTitles: string[], progressContext?: ScrapingProgressContext): Promise<job[] | undefined> => {
     
     // Return mock data if testing mode is enabled
     if (TESTING_MODE) {
         console.log('🧪 TESTING MODE: Returning mock job data');
+        progressEmitter.emitProgress({
+            progressId: progressContext?.progressId,
+            stage: 'scraping_complete',
+            message: 'Testing mode enabled. Returning mock jobs from cache.',
+            meta: { totalJobs: mockJobs.length }
+        });
         return mockJobs;
     }
 
     const jobs: job[] = [];
     let jobsCounter: number = 0;
+    const progressId = progressContext?.progressId;
 
     for (const site of sitesData) {
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'scraping_site',
+            message: `Searching ${site.name} for relevant job postings.`,
+            meta: { site: site.name }
+        });
 
         // Initialise empty array
         const postTitles: string[] = [];
@@ -310,13 +328,37 @@ export const getPostTitles = async (jobTitles: string[]): Promise<job[] | undefi
                 });
             } catch (error) {
                 console.error(`Failed to scrape site ${site.name} for title ${title}:`, error);
+                progressEmitter.emitProgress({
+                    progressId,
+                    stage: 'scraping_error',
+                    message: `Failed to scrape ${site.name} for ${title}.`,
+                    meta: {
+                        site: site.name,
+                        jobTitle: title,
+                        error: error instanceof Error ? error.message : 'Unknown error'
+                    }
+                });
                 // Continue to the next site/title even if one fails
             }
         }
+
+        progressEmitter.emitProgress({
+            progressId,
+            stage: 'scraping_site_complete',
+            message: `Finished scraping ${site.name}.`,
+            meta: { site: site.name, jobsFound: site.jobs?.length ?? 0 }
+        });
     }
 
     // Initialize GraphQL server
     // Search(jobs);
+
+    progressEmitter.emitProgress({
+        progressId,
+        stage: 'scraping_complete',
+        message: 'Completed scraping across all job sources.',
+        meta: { totalJobs: jobs.length }
+    });
 
     return jobs;
 }
