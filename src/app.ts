@@ -1,8 +1,11 @@
 import express from "express";
+import { createServer } from "http";
 import multer from "multer";
 import apiRoutes from './api/routes';
+import { initializeWebSocketServer } from './websocket/server';
 
 const app = express();
+const server = createServer(app);
 
 app.use(express.json());
 
@@ -32,8 +35,10 @@ app.use((error: any, req: any, res: any, next: any) => {
 
 app.use('/api', apiRoutes);
 
+initializeWebSocketServer(server);
+
 const port = process.env.PORT || 3000;
 
-app.listen(port, () => {
+server.listen(port, () => {
     console.log(`Server is running on port ${port}`);
 });
